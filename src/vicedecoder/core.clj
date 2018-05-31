@@ -300,8 +300,11 @@
         bank (vic-bank snap)]
     (and (or (= bank 0)
              (= bank 2))
-         (or (= descriptor 3)
-             (= descriptor 4)))))
+         (or (= descriptor 2)
+             (= descriptor 3)))))
+
+(defn multicolor-mode? [snap]
+  (bit-test (read-vic snap 0xd016) 4))
 
 (defn read-mem
   ([snap offset]
@@ -331,12 +334,34 @@
   ([snap offset byte-count]
    (vec (map (partial read-mem snap) (range offset (+ offset byte-count))))))
 
+(defn extract-charcters [snap]
+  (let [char-definitions (if (charset-from-rom? snap)
+                           (get-in snap ["C64ROM" :chargen])
+                           (read-mem snap (char-mem snap) 4096))]
+        (partition-all 8 char-definitions)))
+
+(defn- char-mono-bit-set? [char-byte pos]
+  (bit-test char-byte pos))
+
+(defn- char-multi-bit-set? [char-byte pos]
+  (or (bit-test char-byte (* 2 pos)))
+      (bit-test char-byte (inc (* 2 pos))))
+
+(defn char-to-ascii [multi-color char-def]
+  (str/join "\n"
+            (map (fn [line]
+                   (apply str
+                          (map #(if ((if multi-color char-multi-bit-set? char-mono-bit-set?)
+                                     line %)
+                                  "*"
+                                  " ")
+                               (range (if multi-color 3 7) -1 -1))))
+                 char-def)))
+
 (comment
  (let [modules (read-modules (subvec (read-content "basic.vsf") 58))
-       by-type (zipmap (map :module-type modules) modules)]
-   (hex-dump (subvec (get-in by-type ["C64MEM" :memory]) 53272) 64 16 53272)
-   by-type
-   (hex-dump (read-mem by-type 0xd000 0x100)
-             0x100 16 0xd000)
+       snap (zipmap (map :module-type modules) modules)]
+   (str/join "\n--------\n" (map (partial char-to-ascii (multicolor-mode? snap))
+                                 (extract-charcters snap)))
    )
  )
