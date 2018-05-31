@@ -1,8 +1,14 @@
 (ns vicedecoder.core
   (:require [clojure.string :as str]
-            [vicedecoder.vic
+            [vicedecoder.vic :as vic
              :refer
-             [char-mem charset-from-rom? multicolor-mode? read-color-ram read-vic]]))
+             [char-mem charset-from-rom? multicolor-mode? read-color-ram read-vic]])
+  (:import java.awt.Color
+           java.awt.image.BufferedImage
+           javax.imageio.ImageIO
+           java.io.File
+           )
+  )
 
 (defn- read-content [file-path]
   (let [f (java.io.File. file-path)
@@ -306,7 +312,7 @@
   (let [char-definitions (if (charset-from-rom? snap)
                            (get-in snap ["C64ROM" :chargen])
                            (read-mem snap (char-mem snap) 4096))]
-        (partition-all 8 char-definitions)))
+        (vec (partition-all 8 char-definitions))))
 
 (defn- char-mono-bit-set? [char-byte pos]
   (bit-test char-byte pos))
@@ -326,10 +332,105 @@
                                (range (if multi-color 3 7) -1 -1))))
                  char-def)))
 
+(def color-lookup
+  {0  (Color. 0 0 0)
+   1  (Color. 0xff 0xff 0xff)
+   2  (Color. 0x88 0x00 0x00)
+   3  (Color. 0xaa 0xff 0xee)
+   4  (Color. 0xcc 0x44 0xcc)
+   5  (Color. 0x00 0xcc 0x55)
+   6  (Color. 0x00 0x00 0xaa)
+   7  (Color. 0xee 0xee 0x77)
+   8  (Color. 0xdd 0x88 0x55)
+   9  (Color. 0x66 0x44 0x00)
+   10 (Color. 0xff 0x77 0x77)
+   11 (Color. 0x33 0x33 0x33)
+   12 (Color. 0x77 0x77 0x77)
+   13 (Color. 0xaa 0xff 0x66)
+   14 (Color. 0x00 0x88 0xff)
+   15 (Color. 0xbb 0xbb 0xbb)
+   })
+
+(defn- paint-char
+  (
+   [g x y multi-color? colors scale char-def]
+  (doall (map-indexed (fn [line char-byte]
+                   (doseq [bit (if multi-color? (range 4) (range 8))]
+                     (if multi-color?
+                       (let [color-index (colors (bit-and (bit-shift-right char-byte (* 2 bit)) 0x3))
+                             color (color-lookup color-index)]
+                         (.setColor g color)
+                         (.fillRect g
+                                    (+ x (* 2 scale (- 3 bit)))
+                                    (+ y (* scale line)) (* 2 scale) scale))
+                       (let [color-index (colors (if (char-mono-bit-set? char-byte bit)
+                                                   1 0))
+                             color (color-lookup color-index
+                                                 )]
+                         (.setColor g color)
+                         (.fillRect g (+ x (* scale (- 7 bit)))
+                                    (+ y (* scale line)) scale scale)
+                         )
+                       )
+                     )
+                   )
+                 char-def
+                 )))
+  ([g multi-color? colors scale char-def]
+   (paint-char g 0 0 multi-color? colors scale char-def)))
+
+(defn char-to-image [multi-color? colors scale char-def]
+  (let [bi (BufferedImage. (* 8 scale) (* 8 scale) BufferedImage/TYPE_INT_ARGB)
+        g (.createGraphics bi)]
+    (paint-char g multi-color? colors scale char-def)
+    bi
+    ))
+
+(defn screen-shot [snap scale]
+  (let [multi-color? (multicolor-mode? snap)
+        base-colors (if multi-color?
+                      [(vic/bg-color snap 0)
+                       (vic/bg-color snap 1)
+                       (vic/bg-color snap 2)]
+                      [(vic/bg-color snap 0)])
+        chars-rom   (extract-characters snap)
+        bi          (BufferedImage. (* 40 8 scale) (* 8 25 scale) BufferedImage/TYPE_INT_ARGB)
+        g           (.createGraphics bi)
+        screen      (vic/vic-mem snap)
+        ]
+    (doseq [row (range 25)]
+      (doseq [col (range 40)]
+        (let [offset        (+ (* 40 row) col)
+              char-at-point (read-mem snap  (+ screen offset))
+              char-def      (get chars-rom char-at-point)
+              color         (vic/read-color-ram snap (+ 0xd800 offset))
+              x-pos         (* col 8 scale)
+              y-pos         (* row 8 scale)
+
+              ]
+          (paint-char g x-pos y-pos multi-color? (conj base-colors color) scale char-def)
+          )
+        ))
+    bi))
+
+
 (comment
- (let [modules (read-modules (subvec (read-content "basic.vsf") 58))
+  (let [modules (read-modules (subvec (read-content "basic.vsf") 58))
        snap (zipmap (map :module-type modules) modules)]
    (str/join "\n--------\n" (map (partial char-to-ascii (multicolor-mode? snap))
                                  (extract-characters snap)))
+   ;; (doall
+   ;;  (map-indexed #(ImageIO/write (char-to-image
+   ;;                                (vic/multicolor-mode? snap)
+   ;;                                [(vic/bg-color snap 0)
+   ;;                                (vic/bg-color snap 1)
+   ;;                                (vic/bg-color snap 2)
+   ;;                                (vic/bg-color snap 3)]
+   ;;                                40
+   ;;                                %2)
+   ;;                               "png"
+   ;;                               (File. (format "/tmp/testchar%03d.png" %1)))
+   ;;               (extract-characters snap)))
+   (ImageIO/write (screen-shot snap 4) "png" (File. "/tmp/screen.png"))
    )
  )

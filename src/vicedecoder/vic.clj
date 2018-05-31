@@ -35,14 +35,17 @@
     0
     (get-in snap ["VIC-II" :color-ram (- offset 0xd800)])))
 
+(defn border-color [snap]
+  (bit-and (read-vic snap 0xd020) 0xf))
+
 (defn bg-color [snap index]
-  (vic-mem snap (+ 0xd021 index)))
+  (bit-and (read-vic snap (+ 0xd021 index)) 0xf))
 
 (defn sprite-multicolor1 [snap]
-  (vic-mem snap 0xd025))
+  (read-vic snap 0xd025))
 
 (defn sprite-multicolor2 [snap]
-  (vic-mem snap 0xd026))
+  (read-vic snap 0xd026))
 
 (defn sprite-color [snap sprite]
-  (vic-mem snap (+ 0xd027 sprite)))
+  (read-vic snap (+ 0xd027 sprite)))
