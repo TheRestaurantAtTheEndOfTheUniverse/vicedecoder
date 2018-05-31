@@ -1,5 +1,8 @@
 (ns vicedecoder.core
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [vicedecoder.vic
+             :refer
+             [char-mem charset-from-rom? multicolor-mode? read-color-ram read-vic]]))
 
 (defn- read-content [file-path]
   (let [f (java.io.File. file-path)
@@ -254,17 +257,6 @@
 (defn read-cia2 [snap offset]
     (get-in snap ["CIA2" :memory (mod (- offset 0xdd00) 0x10)]))
 
-(defn read-vic [snap offset]
-  (let [reg-off (mod (- offset 0xd000) 0x40)]
-    (cond (> reg-off 0x2f) 0xff
-          (> reg-off 0x1f) (bit-or (get-in snap ["VIC-II" :registers reg-off]) 0xf0)
-          :else (get-in snap ["VIC-II" :registers reg-off]))))
-
-(defn read-color-ram [snap offset]
-  (if (>= offset 0xdbe8)
-    0
-    (get-in snap ["VIC-II" :color-ram (- offset 0xd800)])))
-
 (defn read-zero-page [snap offset]
   (case offset
     0 (get-in snap ["C64MEM" :cpu-dir])
@@ -281,30 +273,6 @@
 
 (defn- chargen-rom-enabled? [snap]
   (zero? (and (get-in snap ["C64MEM" :cpu-data]) 0x4)))
-
-(defn- vic-bank
-  [snap]
-  (- 3 (bit-and (get-in snap ["CIA2" :pra]) 3)))
-
-(defn- vic-base [snap]
-  (* 0x4000 (vic-bank snap)))
-
-(defn vic-mem [snap]
-  (+ (vic-base snap) (* 64 (bit-and (read-vic snap 0xd018) 0xf0))))
-
-(defn char-mem [snap]
-  (+ (vic-base snap) (* 1024 (bit-and (read-vic snap 0xd018) 0x0e))))
-
-(defn charset-from-rom? [snap]
-  (let [descriptor (/ (bit-and (read-vic snap 0xd018) 0x0e) 2)
-        bank (vic-bank snap)]
-    (and (or (= bank 0)
-             (= bank 2))
-         (or (= descriptor 2)
-             (= descriptor 3)))))
-
-(defn multicolor-mode? [snap]
-  (bit-test (read-vic snap 0xd016) 4))
 
 (defn read-mem
   ([snap offset]
@@ -334,7 +302,7 @@
   ([snap offset byte-count]
    (vec (map (partial read-mem snap) (range offset (+ offset byte-count))))))
 
-(defn extract-charcters [snap]
+(defn extract-characters [snap]
   (let [char-definitions (if (charset-from-rom? snap)
                            (get-in snap ["C64ROM" :chargen])
                            (read-mem snap (char-mem snap) 4096))]
@@ -362,6 +330,6 @@
  (let [modules (read-modules (subvec (read-content "basic.vsf") 58))
        snap (zipmap (map :module-type modules) modules)]
    (str/join "\n--------\n" (map (partial char-to-ascii (multicolor-mode? snap))
-                                 (extract-charcters snap)))
+                                 (extract-characters snap)))
    )
  )
