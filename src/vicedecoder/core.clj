@@ -109,8 +109,8 @@
   [snap]
   (merge (module-info snap)
          {:memory (subvec snap 22)}
-         (read-properties snap [[:ora :byte]
-                                [:orb :byte]
+         (read-properties snap [[:pra :byte]
+                                [:prb :byte]
                                 [:ddra :byte]
                                 [:ddrb :byte]
                                 [:tac :word]
@@ -282,9 +282,31 @@
 (defn- chargen-rom-enabled? [snap]
   (zero? (and (get-in snap ["C64MEM" :cpu-data]) 0x4)))
 
-(defn read-mem [snap offset]
+(defn- vic-bank
+  [snap]
+  (- 3 (bit-and (get-in snap ["CIA2" :pra]) 3)))
+
+(defn- vic-base [snap]
+  (* 0x4000 (vic-bank snap)))
+
+(defn vic-mem [snap]
+  (+ (vic-base snap) (* 64 (bit-and (read-vic snap 0xd018) 0xf0))))
+
+(defn char-mem [snap]
+  (+ (vic-base snap) (* 1024 (bit-and (read-vic snap 0xd018) 0x0e))))
+
+(defn charset-from-rom? [snap]
+  (let [descriptor (/ (bit-and (read-vic snap 0xd018) 0x0e) 2)
+        bank (vic-bank snap)]
+    (and (or (= bank 0)
+             (= bank 2))
+         (or (= descriptor 3)
+             (= descriptor 4)))))
+
+(defn read-mem
+  ([snap offset]
   (condp > offset
-    0x100 (read-zero-page snap offset)
+    0x100  (read-zero-page snap offset)
     0x8000 (get-in snap ["C64MEM" :memory offset])
     0xa000 (get-in snap ["C64MEM" :memory offset])
     0xc000 (if (basic-rom-enabled? snap)
@@ -305,19 +327,16 @@
     (if (kernal-rom-enabled? snap)
       (get-in snap ["C64ROM" :kernal (- offset 0xe000)])
       (get-in snap ["C64MEM" :memory offset]))
-    )
-  )
+    ))
+  ([snap offset byte-count]
+   (vec (map (partial read-mem snap) (range offset (+ offset byte-count))))))
 
 (comment
  (let [modules (read-modules (subvec (read-content "basic.vsf") 58))
        by-type (zipmap (map :module-type modules) modules)]
    (hex-dump (subvec (get-in by-type ["C64MEM" :memory]) 53272) 64 16 53272)
    by-type
-   (hex-dump (vec (map (partial read-mem by-type)
-                       (range 0xd000 0xd100))) 0x100 16 0xd000)
-   ;;(basic-rom-enabled? by-type)
-   ;;(vec (map (partial read-mem by-type) (range 0x0000 0x1000)))
-   ;;(get-in by-type ["C64ROM" :chargen 0])
-   ;;(chargen-rom-enabled? by-type)
+   (hex-dump (read-mem by-type 0xd000 0x100)
+             0x100 16 0xd000)
    )
  )
